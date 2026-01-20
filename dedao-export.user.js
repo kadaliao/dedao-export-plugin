@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         得到专栏导出PDF
 // @namespace    http://tampermonkey.net/
-// @version      1.1.0
+// @version      1.2.0
 // @description  在得到专栏文章页面添加导出PDF按钮,将文章内容导出为PDF格式
 // @author       Claude
 // @match        https://www.dedao.cn/course/article*
@@ -186,71 +186,110 @@
      * 导出为PDF
      */
     function exportToPDF() {
+        console.log('=== 开始导出PDF ===');
+
         // 显示加载提示
         const loadingDiv = showLoading();
 
         try {
             const articleData = getArticleContent();
+            console.log('提取的数据:', {
+                title: articleData.title,
+                courseName: articleData.courseName,
+                date: articleData.date,
+                contentLength: articleData.content.length
+            });
+
+            // 检查内容是否为空
+            if (!articleData.content || articleData.content.length < 50) {
+                console.error('内容提取失败或内容过短');
+                hideLoading(loadingDiv);
+                showMessage('内容提取失败，请刷新页面后重试', 'error');
+                return;
+            }
 
             // 创建PDF内容HTML
             const pdfContent = `
-                <div style="padding: 40px; font-family: 'Microsoft YaHei', Arial, sans-serif; line-height: 1.8; color: #333;">
-                    <div style="text-align: center; margin-bottom: 40px; border-bottom: 2px solid #1890ff; padding-bottom: 20px;">
-                        <h1 style="font-size: 28px; margin: 0 0 10px 0; color: #1890ff;">${articleData.title}</h1>
-                        ${articleData.courseName ? `<p style="font-size: 16px; color: #666; margin: 5px 0;">${articleData.courseName}</p>` : ''}
-                        ${articleData.date ? `<p style="font-size: 14px; color: #999; margin: 5px 0;">${articleData.date}</p>` : ''}
-                        ${articleData.author ? `<p style="font-size: 14px; color: #999; margin: 5px 0;">${articleData.author}</p>` : ''}
+                <div style="padding: 40px; font-family: 'Microsoft YaHei', 'PingFang SC', Arial, sans-serif; line-height: 1.8; color: #333; max-width: 800px; margin: 0 auto;">
+                    <div style="text-align: center; margin-bottom: 40px; border-bottom: 2px solid #667eea; padding-bottom: 20px;">
+                        <h1 style="font-size: 24px; margin: 0 0 10px 0; color: #667eea; font-weight: bold;">${articleData.title}</h1>
+                        ${articleData.courseName ? `<p style="font-size: 14px; color: #666; margin: 5px 0;">${articleData.courseName}</p>` : ''}
+                        ${articleData.date ? `<p style="font-size: 12px; color: #999; margin: 5px 0;">${articleData.date}</p>` : ''}
                     </div>
-                    <div style="font-size: 16px;">
+                    <div style="font-size: 14px; line-height: 1.8;">
                         ${articleData.content}
                     </div>
-                    <div style="margin-top: 60px; padding-top: 20px; border-top: 1px solid #e8e8e8; text-align: center; color: #999; font-size: 12px;">
-                        <p>导出自: 得到APP</p>
-                        <p>导出时间: ${new Date().toLocaleString('zh-CN')}</p>
+                    <div style="margin-top: 60px; padding-top: 20px; border-top: 1px solid #e8e8e8; text-align: center; color: #999; font-size: 10px;">
+                        <p style="margin: 5px 0;">导出自: 得到APP</p>
+                        <p style="margin: 5px 0;">导出时间: ${new Date().toLocaleString('zh-CN')}</p>
                     </div>
                 </div>
             `;
 
+            console.log('PDF内容长度:', pdfContent.length);
+
             // 创建临时容器
             const tempDiv = document.createElement('div');
             tempDiv.innerHTML = pdfContent;
-            tempDiv.style.position = 'absolute';
-            tempDiv.style.left = '-9999px';
+            tempDiv.style.cssText = 'position: absolute; left: -9999px; top: 0; width: 210mm; background: white;';
             document.body.appendChild(tempDiv);
+
+            console.log('临时容器已添加，开始生成PDF');
+
+            // 检查html2pdf是否可用
+            if (typeof html2pdf === 'undefined') {
+                console.error('html2pdf库未加载');
+                document.body.removeChild(tempDiv);
+                hideLoading(loadingDiv);
+                showMessage('PDF生成库加载失败，请刷新页面重试', 'error');
+                return;
+            }
 
             // PDF配置选项
             const opt = {
-                margin: [10, 10, 10, 10],
-                filename: `${articleData.title.replace(/[/\\?%*:|"<>]/g, '_')}.pdf`,
-                image: { type: 'jpeg', quality: 0.98 },
+                margin: [15, 15, 15, 15],
+                filename: `${articleData.title.replace(/[/\\?%*:|"<>]/g, '_').substring(0, 50)}.pdf`,
+                image: { type: 'jpeg', quality: 0.95 },
                 html2canvas: {
                     scale: 2,
                     useCORS: true,
-                    logging: false,
-                    letterRendering: true
+                    logging: true,
+                    letterRendering: true,
+                    allowTaint: false,
+                    backgroundColor: '#ffffff'
                 },
                 jsPDF: {
                     unit: 'mm',
                     format: 'a4',
-                    orientation: 'portrait'
-                }
+                    orientation: 'portrait',
+                    compress: true
+                },
+                pagebreak: { mode: ['avoid-all', 'css', 'legacy'] }
             };
+
+            console.log('PDF配置:', opt);
 
             // 生成PDF
             html2pdf().set(opt).from(tempDiv).save().then(() => {
+                console.log('PDF生成成功');
                 // 清理临时元素
-                document.body.removeChild(tempDiv);
+                if (tempDiv.parentNode) {
+                    document.body.removeChild(tempDiv);
+                }
                 hideLoading(loadingDiv);
                 showMessage('PDF导出成功!', 'success');
             }).catch(err => {
                 console.error('PDF生成失败:', err);
-                document.body.removeChild(tempDiv);
+                if (tempDiv.parentNode) {
+                    document.body.removeChild(tempDiv);
+                }
                 hideLoading(loadingDiv);
-                showMessage('PDF导出失败,请重试', 'error');
+                showMessage('PDF导出失败: ' + err.message, 'error');
             });
 
         } catch (error) {
             console.error('导出错误:', error);
+            console.error('错误堆栈:', error.stack);
             hideLoading(loadingDiv);
             showMessage('导出失败: ' + error.message, 'error');
         }
