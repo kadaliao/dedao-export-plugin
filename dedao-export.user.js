@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         得到专栏导出PDF
 // @namespace    http://tampermonkey.net/
-// @version      1.2.0
+// @version      1.3.0
 // @description  在得到专栏文章页面添加导出PDF按钮,将文章内容导出为PDF格式
 // @author       Claude
 // @match        https://www.dedao.cn/course/article*
@@ -122,54 +122,80 @@
         }
         console.log('日期:', date);
 
-        // 获取文章正文 - 使用多种选择器尝试
+        // 获取文章正文 - 精确定位包含正文段落的容器
         let content = '';
-        const contentSelectors = [
-            'article',
-            '[class*="article-content"]',
-            '[class*="ArticleContent"]',
-            'main article',
-            '.content article'
-        ];
 
-        let contentContainer = null;
-        for (const selector of contentSelectors) {
-            contentContainer = document.querySelector(selector);
-            if (contentContainer) {
-                console.log('找到内容容器:', selector);
-                break;
+        // 方法1：直接选择所有正文段落和标题
+        console.log('方法1：尝试直接选择正文段落');
+        const paragraphs = document.querySelectorAll('article h2, article h3, article p, article figure');
+        console.log('找到段落数量:', paragraphs.length);
+
+        if (paragraphs.length > 5) {
+            // 说明找到了正文内容
+            let htmlContent = '';
+            paragraphs.forEach(el => {
+                // 跳过包含留言、评论等关键词的元素
+                const text = el.textContent;
+                if (!text.includes('留言') && !text.includes('评论') && !text.includes('联系我们') &&
+                    !text.includes('相关链接') && !text.includes('客服电话')) {
+                    htmlContent += el.outerHTML;
+                }
+            });
+            content = htmlContent;
+            console.log('方法1成功，内容长度:', content.length);
+        }
+
+        // 方法2：如果方法1失败，尝试查找包含特定文本的article
+        if (!content || content.length < 500) {
+            console.log('方法1失败，尝试方法2');
+            const articles = document.querySelectorAll('article');
+            console.log('找到article数量:', articles.length);
+
+            for (const article of articles) {
+                const text = article.textContent;
+                // 寻找包含"你好"或长度超过1000字的article（很可能是正文）
+                if ((text.includes('你好') || text.length > 1000) &&
+                    !text.includes('联系我们') &&
+                    !text.includes('客服电话')) {
+                    console.log('找到正文article，文本长度:', text.length);
+
+                    const clone = article.cloneNode(true);
+
+                    // 移除不需要的元素
+                    const unwanted = clone.querySelectorAll(
+                        '[class*="comment"], [class*="留言"], [class*="audioPlayer"], ' +
+                        'button, script, style, [class*="share"], [class*="ToolBar"]'
+                    );
+                    unwanted.forEach(el => el.remove());
+
+                    content = clone.innerHTML;
+                    console.log('方法2成功，清理后内容长度:', content.length);
+                    break;
+                }
             }
         }
 
-        if (contentContainer) {
-            // 克隆内容以避免修改原页面
-            const clonedContent = contentContainer.cloneNode(true);
+        // 方法3：如果还是失败，尝试使用main标签
+        if (!content || content.length < 500) {
+            console.log('方法2失败，尝试方法3');
+            const main = document.querySelector('main');
+            if (main) {
+                const clone = main.cloneNode(true);
 
-            // 移除不需要的元素
-            const unwantedSelectors = [
-                '[class*="comment"]',
-                '[class*="留言"]',
-                '[class*="audioPlayer"]',
-                '[class*="audio-player"]',
-                'button',
-                'script',
-                'style',
-                '[class*="share"]',
-                '[class*="toolbar"]'
-            ];
+                // 移除所有不需要的元素
+                const unwanted = clone.querySelectorAll(
+                    '[class*="comment"], [class*="留言"], footer, ' +
+                    'button, script, style, [class*="sidebar"]'
+                );
+                unwanted.forEach(el => el.remove());
 
-            unwantedSelectors.forEach(selector => {
-                const elements = clonedContent.querySelectorAll(selector);
-                elements.forEach(el => {
-                    console.log('移除元素:', el.className);
-                    el.remove();
-                });
-            });
+                content = clone.innerHTML;
+                console.log('方法3成功，内容长度:', content.length);
+            }
+        }
 
-            content = clonedContent.innerHTML;
-            console.log('内容长度:', content.length);
-        } else {
-            console.error('未找到文章内容容器');
+        if (!content || content.length < 100) {
+            console.error('所有方法都失败，未能提取文章内容');
             content = '<p>无法提取文章内容，请尝试刷新页面后重试</p>';
         }
 

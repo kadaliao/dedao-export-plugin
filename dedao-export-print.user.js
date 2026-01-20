@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         得到专栏导出PDF (打印版)
 // @namespace    http://tampermonkey.net/
-// @version      2.0.0
+// @version      2.1.0
 // @description  在得到专栏文章页面添加导出PDF按钮,使用浏览器打印功能导出
 // @author       Claude
 // @match        https://www.dedao.cn/course/article*
@@ -104,26 +104,51 @@
         }
         console.log('日期:', date);
 
-        // 获取文章正文
-        const article = document.querySelector('article');
-        let content = '';
+        // 获取文章正文 - 使用三种方法尝试
+        console.log('开始提取正文内容');
 
-        if (article) {
-            console.log('找到article元素');
-            const clone = article.cloneNode(true);
+        // 方法1：直接选择所有正文段落
+        console.log('方法1：直接选择段落');
+        const paragraphs = document.querySelectorAll('article h2, article h3, article p, article figure');
+        console.log('找到段落数量:', paragraphs.length);
 
-            // 移除不需要的元素
-            const unwanted = clone.querySelectorAll(
-                '[class*="comment"], [class*="留言"], [class*="audioPlayer"], ' +
-                'button, script, style, [class*="share"]'
-            );
-            unwanted.forEach(el => el.remove());
-
-            content = clone.innerHTML;
-            console.log('内容长度:', content.length);
-        } else {
-            console.error('未找到article元素');
+        if (paragraphs.length > 5) {
+            let htmlContent = '';
+            paragraphs.forEach(el => {
+                const text = el.textContent;
+                if (!text.includes('留言') && !text.includes('评论') &&
+                    !text.includes('联系我们') && !text.includes('客服电话')) {
+                    htmlContent += el.outerHTML;
+                }
+            });
+            content = htmlContent;
+            console.log('方法1成功，内容长度:', content.length);
         }
+
+        // 方法2：查找包含正文的article
+        if (!content || content.length < 500) {
+            console.log('方法1失败，尝试方法2');
+            const articles = document.querySelectorAll('article');
+            console.log('找到article数量:', articles.length);
+
+            for (const article of articles) {
+                const text = article.textContent;
+                if ((text.includes('你好') || text.length > 1000) &&
+                    !text.includes('联系我们')) {
+                    console.log('找到正文article');
+                    const clone = article.cloneNode(true);
+                    const unwanted = clone.querySelectorAll(
+                        '[class*="comment"], [class*="留言"], button, script, style'
+                    );
+                    unwanted.forEach(el => el.remove());
+                    content = clone.innerHTML;
+                    console.log('方法2成功，内容长度:', content.length);
+                    break;
+                }
+            }
+        }
+
+        console.log('最终内容长度:', content.length);
 
         return { title, courseName, date, content };
     }
