@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         得到专栏导出PDF
 // @namespace    http://tampermonkey.net/
-// @version      1.0.0
+// @version      1.1.0
 // @description  在得到专栏文章页面添加导出PDF按钮,将文章内容导出为PDF格式
 // @author       Claude
 // @match        https://www.dedao.cn/course/article*
@@ -12,119 +12,172 @@
 (function() {
     'use strict';
 
+    console.log('得到专栏导出PDF脚本已加载');
+
     // 等待页面加载完成
-    window.addEventListener('load', function() {
-        // 延迟初始化,确保内容加载完成
-        setTimeout(init, 2000);
-    });
+    if (document.readyState === 'loading') {
+        document.addEventListener('DOMContentLoaded', init);
+    } else {
+        init();
+    }
 
     function init() {
-        // 创建导出按钮
-        createExportButton();
+        console.log('开始初始化导出按钮');
+        // 延迟创建按钮,确保页面完全加载
+        setTimeout(createExportButton, 3000);
     }
 
     /**
      * 创建导出按钮
      */
     function createExportButton() {
-        // 查找设置按钮的父容器
-        const toolbarContainer = document.querySelector('div[class*="ToolBar"]');
-        if (!toolbarContainer) {
-            console.log('未找到工具栏容器');
-            return;
-        }
+        console.log('正在创建导出按钮');
 
         // 创建导出按钮
         const exportBtn = document.createElement('button');
-        exportBtn.textContent = '📄 导出PDF';
+        exportBtn.id = 'dedao-export-pdf-btn';
+        exportBtn.innerHTML = '📄 导出PDF';
         exportBtn.style.cssText = `
             position: fixed;
-            top: 80px;
-            right: 20px;
-            z-index: 9999;
-            padding: 10px 20px;
-            background: #1890ff;
+            top: 100px;
+            right: 30px;
+            z-index: 99999;
+            padding: 12px 24px;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             color: white;
             border: none;
-            border-radius: 4px;
+            border-radius: 8px;
             cursor: pointer;
-            font-size: 14px;
-            font-weight: 500;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
-            transition: all 0.3s;
+            font-size: 16px;
+            font-weight: bold;
+            box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+            transition: all 0.3s ease;
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, 'Helvetica Neue', Arial, sans-serif;
         `;
 
         // 鼠标悬停效果
         exportBtn.addEventListener('mouseenter', function() {
-            this.style.background = '#40a9ff';
-            this.style.transform = 'translateY(-2px)';
-            this.style.boxShadow = '0 4px 12px rgba(0,0,0,0.2)';
+            this.style.transform = 'translateY(-3px) scale(1.05)';
+            this.style.boxShadow = '0 6px 20px rgba(102, 126, 234, 0.6)';
         });
 
         exportBtn.addEventListener('mouseleave', function() {
-            this.style.background = '#1890ff';
-            this.style.transform = 'translateY(0)';
-            this.style.boxShadow = '0 2px 8px rgba(0,0,0,0.15)';
+            this.style.transform = 'translateY(0) scale(1)';
+            this.style.boxShadow = '0 4px 15px rgba(102, 126, 234, 0.4)';
         });
 
         // 点击导出
-        exportBtn.addEventListener('click', exportToPDF);
+        exportBtn.addEventListener('click', function(e) {
+            e.preventDefault();
+            console.log('点击导出PDF按钮');
+            exportToPDF();
+        });
 
         // 添加按钮到页面
         document.body.appendChild(exportBtn);
+        console.log('导出按钮已添加到页面');
     }
 
     /**
      * 获取文章内容
      */
     function getArticleContent() {
-        // 获取文章标题
-        const titleElement = document.querySelector('div[class*="ToolBar"] div[class*="articleTitle"]');
-        const title = titleElement ? titleElement.textContent.trim() : '未命名文章';
+        console.log('开始提取文章内容');
 
-        // 获取课程名称
-        const courseElement = document.querySelector('div[class*="ToolBar"] div[class*="courseName"]');
-        const courseName = courseElement ? courseElement.textContent.trim() : '';
+        // 获取页面标题作为文章标题
+        let title = document.title.replace(' - 得到APP', '').trim();
+        console.log('文章标题:', title);
+
+        // 尝试多种方式获取课程名称
+        let courseName = '';
+        const courseSelectors = [
+            '.courseName',
+            '[class*="courseName"]',
+            '[class*="course-name"]'
+        ];
+
+        for (const selector of courseSelectors) {
+            const courseEl = document.querySelector(selector);
+            if (courseEl && courseEl.textContent.trim()) {
+                courseName = courseEl.textContent.trim();
+                break;
+            }
+        }
+        console.log('课程名称:', courseName);
 
         // 获取日期
-        const dateElement = document.querySelector('div[class*="ToolBar"] div[class*="date"]');
-        const date = dateElement ? dateElement.textContent.trim() : '';
+        let date = '';
+        const dateSelectors = [
+            '.date',
+            '[class*="date"]',
+            '[class*="time"]'
+        ];
 
-        // 获取作者信息
-        const authorElement = document.querySelector('div[class*="audioPlayer"] div:nth-child(2)');
-        const author = authorElement ? authorElement.textContent.trim() : '';
+        for (const selector of dateSelectors) {
+            const dateEl = document.querySelector(selector);
+            if (dateEl && dateEl.textContent.trim() && dateEl.textContent.includes('202')) {
+                date = dateEl.textContent.trim();
+                break;
+            }
+        }
+        console.log('日期:', date);
 
-        // 获取文章正文内容
-        const contentContainer = document.querySelector('article') || document.querySelector('div[class*="ArticleContent"]');
+        // 获取文章正文 - 使用多种选择器尝试
         let content = '';
+        const contentSelectors = [
+            'article',
+            '[class*="article-content"]',
+            '[class*="ArticleContent"]',
+            'main article',
+            '.content article'
+        ];
+
+        let contentContainer = null;
+        for (const selector of contentSelectors) {
+            contentContainer = document.querySelector(selector);
+            if (contentContainer) {
+                console.log('找到内容容器:', selector);
+                break;
+            }
+        }
 
         if (contentContainer) {
             // 克隆内容以避免修改原页面
             const clonedContent = contentContainer.cloneNode(true);
 
-            // 移除不需要的元素(如广告、留言区等)
+            // 移除不需要的元素
             const unwantedSelectors = [
-                'div[class*="留言"]',
-                'div[class*="comment"]',
-                'div[class*="audioPlayer"]',
+                '[class*="comment"]',
+                '[class*="留言"]',
+                '[class*="audioPlayer"]',
+                '[class*="audio-player"]',
                 'button',
                 'script',
-                'style'
+                'style',
+                '[class*="share"]',
+                '[class*="toolbar"]'
             ];
 
             unwantedSelectors.forEach(selector => {
                 const elements = clonedContent.querySelectorAll(selector);
-                elements.forEach(el => el.remove());
+                elements.forEach(el => {
+                    console.log('移除元素:', el.className);
+                    el.remove();
+                });
             });
 
             content = clonedContent.innerHTML;
+            console.log('内容长度:', content.length);
+        } else {
+            console.error('未找到文章内容容器');
+            content = '<p>无法提取文章内容，请尝试刷新页面后重试</p>';
         }
 
         return {
             title,
             courseName,
             date,
-            author,
+            author: '',
             content
         };
     }
