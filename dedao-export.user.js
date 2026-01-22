@@ -1,13 +1,11 @@
 // ==UserScript==
 // @name         Dedao Article Exporter
 // @namespace    https://www.dedao.cn/
-// @version      2.0.0
+// @version      2.1.0
 // @description  Export Dedao course articles to PDF.
 // @match        https://www.dedao.cn/course/article*
 // @run-at       document-idle
 // @grant        GM_addStyle
-// @require      https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js
-// @require      https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js
 // ==/UserScript==
 
 (function () {
@@ -18,9 +16,6 @@
   const EXPORT_MASK_ID = 'dedao-export-mask';
   const LOG_PREFIX = '[dedao-export]';
   const PAGE_WIDTH_PX = 794;
-  const PAGE_HEIGHT_PX = 1123;
-  const PAGE_MARGIN_TOP = 72;
-  const PAGE_MARGIN_BOTTOM = 96;
 
   const STYLE = `
     #${BUTTON_ID} {
@@ -170,6 +165,46 @@
     }
   `;
 
+  const PRINT_STYLE = `
+    @page {
+      size: A4;
+      margin: 0;
+    }
+
+    html,
+    body {
+      margin: 0;
+      padding: 0;
+      background: #ffffff;
+    }
+
+    body {
+      -webkit-print-color-adjust: exact;
+      print-color-adjust: exact;
+    }
+
+    @media print {
+      #${EXPORT_ROOT_ID} {
+        margin: 0 auto;
+      }
+
+      #${EXPORT_ROOT_ID} img,
+      #${EXPORT_ROOT_ID} figure,
+      #${EXPORT_ROOT_ID} blockquote,
+      #${EXPORT_ROOT_ID} table {
+        break-inside: avoid;
+        page-break-inside: avoid;
+      }
+
+      #${EXPORT_ROOT_ID} h1,
+      #${EXPORT_ROOT_ID} h2,
+      #${EXPORT_ROOT_ID} h3,
+      #${EXPORT_ROOT_ID} h4 {
+        break-after: avoid;
+      }
+    }
+  `;
+
   GM_addStyle(STYLE);
 
   function log(...args) {
@@ -201,7 +236,7 @@
     const btn = document.createElement('button');
     btn.id = BUTTON_ID;
     btn.type = 'button';
-    btn.textContent = '📄 导出PDF';
+    btn.textContent = '🖨️ 打印/保存PDF';
     btn.addEventListener('click', handleExport);
     document.body.appendChild(btn);
   }
@@ -375,24 +410,13 @@
 
     mask.appendChild(root);
     document.body.appendChild(mask);
-    return { root, mask };
+    return { root, mask, meta };
   }
 
   function makeMetaItem(label, value) {
     const span = document.createElement('span');
     span.textContent = `${label}: ${value}`;
     return span;
-  }
-
-  function getJsPdf() {
-    const jsPDF = (window.jspdf && window.jspdf.jsPDF) || window.jsPDF;
-    if (!jsPDF) throw new Error('jsPDF is not available.');
-    return jsPDF;
-  }
-
-  async function ensureDependenciesReady() {
-    if (!window.html2canvas) throw new Error('html2canvas is not available.');
-    getJsPdf();
   }
 
   function applyNeutralViewportScale() {
@@ -419,6 +443,48 @@
     };
   }
 
+  function createPrintWindow(title, root) {
+    const printWindow = window.open('', '_blank', 'width=900,height=1200');
+    if (!printWindow) {
+      throw new Error('无法打开打印窗口，请检查浏览器是否拦截弹窗。');
+    }
+
+    const doc = printWindow.document;
+    if (!doc.head || !doc.body) {
+      doc.open();
+      doc.write('<!doctype html><html><head></head><body></body></html>');
+      doc.close();
+    }
+    doc.title = title || 'dedao-article';
+    if (doc.body) doc.body.innerHTML = '';
+
+    const baseTag = doc.createElement('base');
+    baseTag.href = window.location.href;
+    doc.head.appendChild(baseTag);
+
+    const styleTag = doc.createElement('style');
+    styleTag.textContent = STYLE + PRINT_STYLE;
+    doc.head.appendChild(styleTag);
+
+    const printRoot = doc.importNode(root, true);
+    doc.body.appendChild(printRoot);
+    return { printWindow, printRoot };
+  }
+
+  async function openPrintDialog(root, title) {
+    const { printWindow, printRoot } = createPrintWindow(title, root);
+    await waitForImages(printRoot);
+    if (printWindow.document.fonts && printWindow.document.fonts.ready) {
+      try {
+        await printWindow.document.fonts.ready;
+      } catch (err) {
+        log('font-load-skip', err);
+      }
+    }
+    printWindow.focus();
+    printWindow.print();
+  }
+
   async function handleExport() {
     const btn = document.getElementById(BUTTON_ID);
     if (!btn || btn.disabled) return;
@@ -430,81 +496,11 @@
     const restoreViewport = applyNeutralViewportScale();
     let exportElements;
     try {
-      await ensureDependenciesReady();
       exportElements = buildExportRoot();
-      await waitForImages(exportElements.root);
-
-      const rootRect = exportElements.root.getBoundingClientRect();
-      const maskWidth = exportElements.mask ? exportElements.mask.offsetWidth : 0;
-      log('export-metrics', {
-        rootWidth: rootRect.width,
-        rootHeight: rootRect.height,
-        maskWidth,
-        innerWidth: window.innerWidth,
-        innerHeight: window.innerHeight,
-        devicePixelRatio: window.devicePixelRatio,
-      });
-
-      const meta = getExportMeta();
-      const filename = sanitizeFileName(meta.title || 'dedao-article') + '.pdf';
-
-      const captureWidth = PAGE_WIDTH_PX;
-      const captureHeight = Math.ceil(exportElements.root.scrollHeight);
-      const canvas = await window.html2canvas(exportElements.root, {
-        scale: 2,
-        useCORS: true,
-        allowTaint: true,
-        backgroundColor: '#ffffff',
-        width: captureWidth,
-        windowWidth: captureWidth,
-        scrollX: 0,
-        scrollY: 0,
-      });
-
-      const pdf = new (getJsPdf())({
-        unit: 'px',
-        format: [PAGE_WIDTH_PX, PAGE_HEIGHT_PX],
-        orientation: 'portrait',
-      });
-
-      const pageContentHeight = PAGE_HEIGHT_PX - PAGE_MARGIN_TOP - PAGE_MARGIN_BOTTOM;
-      const scaleFactor = canvas.width / PAGE_WIDTH_PX;
-      const sliceHeightPx = Math.floor(pageContentHeight * scaleFactor);
-      const totalPages = Math.max(1, Math.ceil(canvas.height / sliceHeightPx));
-
-      for (let page = 0; page < totalPages; page += 1) {
-        const sliceCanvas = document.createElement('canvas');
-        const sliceStartY = page * sliceHeightPx;
-        const sliceHeight = Math.min(sliceHeightPx, canvas.height - sliceStartY);
-        sliceCanvas.width = canvas.width;
-        sliceCanvas.height = sliceHeight;
-
-        const ctx = sliceCanvas.getContext('2d');
-        ctx.fillStyle = '#ffffff';
-        ctx.fillRect(0, 0, sliceCanvas.width, sliceCanvas.height);
-        ctx.drawImage(
-          canvas,
-          0,
-          sliceStartY,
-          canvas.width,
-          sliceHeight,
-          0,
-          0,
-          sliceCanvas.width,
-          sliceCanvas.height,
-        );
-
-        const sliceImg = sliceCanvas.toDataURL('image/jpeg', 0.98);
-        const sliceHeightPdf = sliceHeight / scaleFactor;
-        pdf.addImage(sliceImg, 'JPEG', 0, PAGE_MARGIN_TOP, PAGE_WIDTH_PX, sliceHeightPdf);
-
-        if (page < totalPages - 1) {
-          pdf.addPage();
-        }
-      }
-
-      pdf.save(filename);
-      log('Export finished:', filename);
+      const meta = exportElements.meta || getExportMeta();
+      const title = sanitizeFileName(meta.title || 'dedao-article');
+      await openPrintDialog(exportElements.root, title);
+      log('Print dialog opened:', title);
     } catch (err) {
       console.error(LOG_PREFIX, err);
       alert(`导出失败: ${err.message || err}`);
